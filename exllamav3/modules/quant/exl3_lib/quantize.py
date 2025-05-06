@@ -253,6 +253,38 @@ def blockwise_preapply_had_r_(x: torch.Tensor, had_dim):
         x[:, start:end] = block_transformed
 
 
+def retrying_cholesky(A: torch.Tensor, jitter: float | None = None, max_iters: int = 5):
+    if jitter is None:
+        jitter = 1e-10 if A.dtype == torch.float64 else 1e-6
+    shift = jitter
+    I = None
+
+    for i in range(max_iters + 1):
+        try:
+            if i > 0:
+                print(f"Cholesky factorization failed, retrying with increased diagonal jitter.")
+                L = torch.linalg.cholesky(A + shift * I)
+            else:
+                L = torch.linalg.cholesky(A)
+
+        except Exception as e:
+            if (
+                e.__class__.__name__ == "_LinAlgError"
+                and "The factorization could not be completed because the input is not positive-definite" in str(e)
+            ):
+                if I is None:
+                    I = torch.eye(*A.shape, dtype=A.dtype, device=A.device)
+                if i > 0:
+                    shift *= 10
+            else:
+                raise e
+
+        else:
+            return L
+
+    raise RuntimeError("Max cholesky factorization retries exceeded.")
+
+
 def block_ldl(H: torch.Tensor, b: int, verbose: bool):
 
     n, _ = H.shape
@@ -263,7 +295,7 @@ def block_ldl(H: torch.Tensor, b: int, verbose: bool):
     # Try on GPU first
     try:
         retry_cpu = False
-        L = torch.linalg.cholesky(H)
+        L = retrying_cholesky(H)
         # H is not needed after this, move to CPU. Then overwrite H's GPU storage with L, since we can't otherwise
         # free up that VRAM as the tensor is referenced by the parent frame
         H_cpu = H.cpu()
@@ -281,7 +313,7 @@ def block_ldl(H: torch.Tensor, b: int, verbose: bool):
         print(f" !! Out of memory on {str(H.device)}, trying CPU fallback")
         free_mem()
         H_cpu = H.cpu()
-        L_cpu = torch.linalg.cholesky(H_cpu)
+        L_cpu = retrying_cholesky(H_cpu)
         # This is ugly, but overwrite H in VRAM to avoid allocating a new tensor, then replace reference with CPU copy
         H.copy_(L_cpu)
         del L_cpu

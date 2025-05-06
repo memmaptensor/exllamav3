@@ -60,7 +60,7 @@ class TransformerBlock(Module):
             if params.get("prefill"): return x
             if self.attn_post_norm:
                 y = self.attn_post_norm.forward(y, params)
-            x += y
+            x += y.nan_to_num()
 
         if self.mlp:
             if self.mlp_norm:
@@ -68,7 +68,7 @@ class TransformerBlock(Module):
             y = self.mlp.forward(y, params)
             if self.mlp_post_norm:
                 y = self.mlp_post_norm.forward(y, params)
-            x += y
+            x += y.nan_to_num()
 
         return to2(x, out_dtype, self.out_dtype)
 
@@ -134,10 +134,10 @@ class ParallelDecoderBlock(Module):
 
         y = self.input_norm.forward(x, params, out_dtype = torch.half)
         y1 = self.attn.forward(y, params)
-        x += y1
+        x += y1.nan_to_num()
         if params.get("prefill"): return x
         y2 = self.mlp.forward(y, params)
-        x += y2
+        x += y2.nan_to_num()
 
         return to2(x, out_dtype, self.out_dtype)
 
