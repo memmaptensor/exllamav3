@@ -266,7 +266,7 @@ class Linear(Module):
             }
 
         params["capture"][self.qmap]["num_total"] += x.numel()
-        ext.count_inf_nan(x, params["capture"][self.qmap]["inf_nan"])
+        ext.count_inf_nan(self.x_orig, params["capture"][self.qmap]["inf_nan"])
 
         if params["capture"][self.qmap]["first_key"] == self.key:
             rows = np.prod(x.shape[:-1])
@@ -289,9 +289,13 @@ class Linear(Module):
         params: dict,
         out_dtype: torch.dtype | None = None,
     ) -> torch.Tensor:
+        self.x_orig = x
+        x = x.nan_to_num()
 
         if "capture" in params and self.qmap:
             self.capture_H(x, params)
+        
+        del self.x_orig
 
         x = self.inner.forward(x, params, out_dtype)
         if self.softcap != 0.0:

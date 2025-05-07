@@ -735,6 +735,17 @@ def regularize(
     return apply_out_scales, weight, g_scale, su, sv
 
 
+def trace_quad_form_chunked(A: torch.Tensor, H: torch.Tensor, chunk_size: int = 512):
+    total = 0.0
+    N, K = A.shape
+    for start in range(0, K, chunk_size):
+        end = min(start + chunk_size, K)
+        A_chunk = A[:, start:end]
+        HA = H.matmul(A_chunk)
+        total += (A_chunk * HA).sum().item()
+    return total
+
+
 def quantize_exl3(
     weight: torch.Tensor,
     H_data: dict,
@@ -851,10 +862,26 @@ def quantize_exl3(
         Hd = H.to(device)
         del weight_r
         E = E.to(device)
-        num = torch.einsum("ik,ij,jk->", E, Hd, E).item()
+        
+        try:
+            num = torch.einsum("ik,ij,jk->", E, Hd, E).item()
+        except RuntimeError as e:
+            if "argument k must be non-negative and less than" in str(e):
+                num = trace_quad_form_chunked(E, Hd, chunk_size=512)
+            else:
+                raise e
+        
         del E
         W = W.to(device)
-        den = torch.einsum("ik,ij,jk->", W, Hd, W).item()
+
+        try:
+            den = torch.einsum("ik,ij,jk->", W, Hd, W).item()
+        except RuntimeError as e:
+            if "argument k must be non-negative and less than" in str(e):
+                den = trace_quad_form_chunked(W, Hd, chunk_size=512)
+            else:
+                raise e
+        
         del W
         del Hd
         proxy_err = num / max(den, 1e-8)
